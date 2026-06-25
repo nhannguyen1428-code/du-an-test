@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0b141a;
+  --foreground: #e9edef;
+  --panel: #111b21;
+  --muted: #8696a0;
+  --accent: #00a884;
+  --accent-hover: #06cf9c;
+  --bubble-other: #202c33;
+  --bubble-mine: #005c4b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-bubble-other: var(--bubble-other);
+  --color-bubble-mine: var(--bubble-mine);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
