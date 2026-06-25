@@ -1,5 +1,10 @@
-import { ChatRoom } from "@/components/chat-room";
+import { AppShell } from "@/components/app-shell";
+import { UserProvider } from "@/contexts/user-context";
 
 export default function HomePage() {
-  return <ChatRoom />;
+  return (
+    <UserProvider>
+      <AppShell />
+    </UserProvider>
+  );
 }

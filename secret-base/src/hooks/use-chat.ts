@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { filterActiveMessages } from "@/lib/message-ttl";
+import { useMessageExpiry } from "@/hooks/use-message-expiry";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
   MAX_MESSAGE_LENGTH,
@@ -8,6 +10,7 @@ import {
   SEND_COOLDOWN_MS,
   type Message,
 } from "@/types/message";
+import type { MessageAttachment } from "@/types/attachment";
 
 export type ChatMode = "supabase" | "shared";
 
@@ -16,11 +19,11 @@ const POLL_INTERVAL_MS = 2000;
 export function useChat(nickname: string | null, clientId: string) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [mode] = useState<ChatMode>(() =>
-    isSupabaseConfigured() ? "supabase" : "shared",
-  );
+  const [mode] = useState<ChatMode>("shared");
   const lastSentAtRef = useRef(0);
   const messagesRef = useRef<Message[]>([]);
+
+  useMessageExpiry(setMessages);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -29,8 +32,8 @@ export function useChat(nickname: string | null, clientId: string) {
   const mergeMessages = useCallback((incoming: Message[]) => {
     setMessages((prev) => {
       const map = new Map(prev.map((m) => [m.id, m]));
-      for (const msg of incoming) map.set(msg.id, msg);
-      return Array.from(map.values()).sort(
+      for (const msg of filterActiveMessages(incoming)) map.set(msg.id, msg);
+      return filterActiveMessages(Array.from(map.values())).sort(
         (a, b) =>
           new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       );
@@ -38,9 +41,10 @@ export function useChat(nickname: string | null, clientId: string) {
   }, []);
 
   const appendMessage = useCallback((incoming: Message) => {
+    if (filterActiveMessages([incoming]).length === 0) return;
     setMessages((prev) => {
       if (prev.some((m) => m.id === incoming.id)) return prev;
-      return [...prev, incoming];
+      return filterActiveMessages([...prev, incoming]);
     });
   }, []);
 
@@ -58,7 +62,7 @@ export function useChat(nickname: string | null, clientId: string) {
         setError("Không tải được tin nhắn từ Supabase.");
         return;
       }
-      setMessages(data ?? []);
+      setMessages(filterActiveMessages(data ?? []));
       return;
     }
 
@@ -110,14 +114,13 @@ export function useChat(nickname: string | null, clientId: string) {
       });
       if (!res.ok) return;
       const data = (await res.json()) as { messages: Message[] };
-      const latest = data.messages ?? [];
-      if (latest.length !== messagesRef.current.length) {
-        mergeMessages(latest);
-      } else {
-        const lastRemote = latest.at(-1)?.id;
-        const lastLocal = messagesRef.current.at(-1)?.id;
-        if (lastRemote !== lastLocal) mergeMessages(latest);
-      }
+      const latest = filterActiveMessages(data.messages ?? []);
+      setMessages(
+        latest.sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        ),
+      );
     };
 
     const interval = setInterval(() => void poll(), POLL_INTERVAL_MS);
@@ -144,8 +147,12 @@ export function useChat(nickname: string | null, clientId: string) {
   }, [nickname, mode, appendMessage, mergeMessages]);
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, attachment?: MessageAttachment) => {
       if (!nickname) return;
+      if (attachment && mode === "supabase") {
+        setError("Gửi file chỉ hỗ trợ khi dùng Redis/Vercel.");
+        return;
+      }
 
       const now = Date.now();
       if (now - lastSentAtRef.current < SEND_COOLDOWN_MS) {
@@ -156,6 +163,7 @@ export function useChat(nickname: string | null, clientId: string) {
         setError(`Tin nhắn tối đa ${MAX_MESSAGE_LENGTH} ký tự.`);
         return;
       }
+      if (!content.trim() && !attachment) return;
 
       setError(null);
 
@@ -181,6 +189,7 @@ export function useChat(nickname: string | null, clientId: string) {
             nickname,
             client_id: clientId,
             content,
+            attachment,
           }),
         });
         if (!res.ok) {
@@ -197,5 +206,55 @@ export function useChat(nickname: string | null, clientId: string) {
     [nickname, clientId, mode, appendMessage],
   );
 
-  return { messages, error, setError, sendMessage, mode };
+  const upsertMessage = useCallback((updated: Message) => {
+    setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+  }, []);
+
+  const removeMessage = useCallback((messageId: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+  }, []);
+
+  const messageActions = useCallback(() => {
+    if (mode === "supabase") return undefined;
+    return {
+      onEdit: async (messageId: string, content: string) => {
+        const res = await fetch(`/api/messages/${encodeURIComponent(messageId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_id: clientId, room_id: ROOM_ID, content }),
+        });
+        const data = (await res.json()) as { message?: Message; error?: string };
+        if (!res.ok) throw new Error(data.error ?? "Sửa tin thất bại.");
+        if (data.message) upsertMessage(data.message);
+      },
+      onRecall: async (messageId: string) => {
+        const res = await fetch(`/api/messages/${encodeURIComponent(messageId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_id: clientId, room_id: ROOM_ID, action: "recall" }),
+        });
+        const data = (await res.json()) as { message?: Message; error?: string };
+        if (!res.ok) throw new Error(data.error ?? "Thu hồi tin thất bại.");
+        if (data.message) upsertMessage(data.message);
+      },
+      onDelete: async (messageId: string) => {
+        const res = await fetch(
+          `/api/messages/${encodeURIComponent(messageId)}?client_id=${encodeURIComponent(clientId)}&room_id=${encodeURIComponent(ROOM_ID)}`,
+          { method: "DELETE" },
+        );
+        const data = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(data.error ?? "Xóa tin thất bại.");
+        removeMessage(messageId);
+      },
+    };
+  }, [clientId, mode, removeMessage, upsertMessage]);
+
+  return {
+    messages,
+    error,
+    setError,
+    sendMessage,
+    messageActions: messageActions(),
+    mode,
+  };
 }

@@ -2,6 +2,12 @@
 
 Phòng chat ẩn danh realtime cho lớp học.
 
+## Tính năng
+
+- **Phòng chung** — chat ẩn danh toàn lớp
+- **Kết bạn** — thêm bạn bằng mã 6 ký tự
+- **Tin riêng** — nhắn DM 1-1 với bạn bè (không lộ ra phòng chung)
+
 ## Chạy ngay (không cần Supabase)
 
 ```bash

@@ -1,20 +1,17 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { MessageBubble } from "@/components/message-bubble";
+import { MessageBubble, type MessageActionHandlers } from "@/components/message-bubble";
+import { useChatScroll } from "@/hooks/use-chat-scroll";
 import type { Message } from "@/types/message";
 
 type MessageListProps = {
   messages: Message[];
   clientId: string;
+  actions?: MessageActionHandlers;
 };
 
-export function MessageList({ messages, clientId }: MessageListProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+export function MessageList({ messages, clientId, actions }: MessageListProps) {
+  const { containerRef, bottomRef, onScroll } = useChatScroll(messages);
 
   if (messages.length === 0) {
     return (
@@ -25,12 +22,17 @@ export function MessageList({ messages, clientId }: MessageListProps) {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-3 py-4 sm:px-4">
+    <div
+      ref={containerRef}
+      onScroll={onScroll}
+      className="flex flex-1 flex-col gap-2 overflow-y-auto px-3 py-4 sm:px-4"
+    >
       {messages.map((message) => (
         <MessageBubble
           key={message.id}
           message={message}
           isMine={message.client_id === clientId}
+          actions={message.client_id === clientId ? actions : undefined}
         />
       ))}
       <div ref={bottomRef} />
